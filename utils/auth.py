@@ -3,14 +3,14 @@ import os
 import requests
 from urllib.parse import urlencode
 
-# ── Google OAuth config (loaded from .env) ────────────────────────────────────
+# ── Google OAuth config────────────────────────────────────
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8501/")
 
 
 # ─────────────────────────────────────────────────────────────────
-# ORIGINAL FUNCTIONS — completely unchanged
+# ORIGINAL FUNCTIONS 
 # ─────────────────────────────────────────────────────────────────
 
 def signup_user(username, password):
