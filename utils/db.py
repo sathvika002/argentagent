@@ -1,12 +1,17 @@
 import psycopg2
+from dotenv import load_dotenv
+import os
 from config import DEFAULT_BALANCE
 
+
+load_dotenv()
+
 DB_CONFIG = {
-    "dbname": "argentagent",
-    "user": "sathvika",
-    "password": "",
-    "host": "localhost",
-    "port": 5432
+    "dbname": os.getenv("DB_NAME", "argentagent"),
+    "user":   os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "host":   os.getenv("DB_HOST", "localhost"),
+    "port":   int(os.getenv("DB_PORT", 5432))
 }
 
 def connect():

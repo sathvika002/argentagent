@@ -145,9 +145,17 @@ def _get_user_profile(username: str) -> dict:
 # LANGGRAPH NODES
 # ─────────────────────────────────────────
 
+from utils.time_utils import seed_last_time
+
 def node_load_context(state: TransactionState) -> dict:
     history = _get_history(state["username"])
     profile = _get_user_profile(state["username"])
+    
+    # seed the time simulation from the last known transaction
+    if history:
+        last_tx_time = history[-1][1]  # index 1 is the time column
+        seed_last_time(last_tx_time)
+    
     return {"history": history, "user_profile": profile}
 
 
