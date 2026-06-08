@@ -1,13 +1,13 @@
 import psycopg2
-from dotenv import load_dotenv
 import os
+from dotenv import load_dotenv
 from config import DEFAULT_BALANCE
 
 
 load_dotenv()
 
 DB_CONFIG = {
-    "dbname": os.getenv("DB_NAME", "argentagent"),
+    "dbname": os.getenv("DB_NAME"),
     "user":   os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD", ""),
     "host":   os.getenv("DB_HOST", "localhost"),
@@ -55,5 +55,9 @@ def init_db():
         ADD COLUMN IF NOT EXISTS google_id TEXT DEFAULT NULL
     """)
 
+    cur.execute("""
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS email TEXT DEFAULT NULL
+    """)
     conn.commit()
     conn.close()

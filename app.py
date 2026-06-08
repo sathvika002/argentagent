@@ -12,7 +12,6 @@ import random
 import secrets
 import pandas as pd
 
-init_db()
 
 def generate_otp():
     return str(random.randint(100000, 999999))
@@ -121,12 +120,12 @@ def restore_pending_state(username: str):
 
 
 # ---------------- AUTH ----------------
-def auth_page(): 
+def auth_page():
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
     with tab1:
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
+        username = st.text_input("Username", key="login_username")
+        password = st.text_input("Password", type="password", key="login_password")
 
         if st.button("Login"):
             if login_user(username, password):
@@ -139,7 +138,7 @@ def auth_page():
         st.divider()
         st.caption("or continue with")
 
-        if st.button("Sign in with Google", use_container_width=True):
+        if st.button("Sign in with Google", use_container_width=True, key="google_login"):
             auth_url = get_google_auth_url("unused")
             st.markdown(
                 f'<meta http-equiv="refresh" content="0; url={auth_url}">',
@@ -147,12 +146,29 @@ def auth_page():
             )
 
     with tab2:
-        new_user = st.text_input("New Username")
-        new_pass = st.text_input("New Password", type="password")
+        new_user  = st.text_input("Username", key="signup_username")
+        new_email = st.text_input("Email", key="signup_email")
+        new_pass  = st.text_input("Password", type="password", key="signup_password")
 
         if st.button("Sign Up"):
-            signup_user(new_user, new_pass)
-            st.success("User created")
+            if not new_user or not new_email or not new_pass:
+                st.error("Please fill in all fields.")
+            else:
+                success = signup_user(new_user, new_pass, email=new_email)
+                if success:
+                    st.success("Account created! You can now log in.")
+                else:
+                    st.error("Username already taken, try another.")
+
+        st.divider()
+        st.caption("or continue with")
+
+        if st.button("Sign up with Google", use_container_width=True, key="google_signup"):
+            auth_url = get_google_auth_url("unused")
+            st.markdown(
+                f'<meta http-equiv="refresh" content="0; url={auth_url}">',
+                unsafe_allow_html=True,
+            )
 
 
 # ---------------- MAIN APP ----------------
