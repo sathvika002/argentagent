@@ -19,6 +19,12 @@ def add_transaction(username, amount, time, location, risk_level, status, report
         cur.execute("""
             UPDATE users SET balance = balance - %s WHERE username = %s
         """, (amount, username))
+    
+    # Server-side amount validation — frontend min_value=0 is not enough
+    if not isinstance(amount, (int, float)) or amount <= 0:
+        raise ValueError("Invalid transaction amount")
+    if amount > 10_000_000:
+        raise ValueError("Amount exceeds maximum limit")
 
     conn.commit()
     conn.close()

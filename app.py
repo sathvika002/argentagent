@@ -24,6 +24,7 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = None
 
+
 if "show_agent" not in st.session_state:
     st.session_state.show_agent = False
 
@@ -50,6 +51,15 @@ if "pending_tx_meta" not in st.session_state:
 
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = "Transaction"
+
+if "awaiting_otp" not in st.session_state:
+    st.session_state.awaiting_otp = False
+
+if "generated_otp" not in st.session_state:
+    st.session_state.generated_otp = None
+
+if "otp_attempts" not in st.session_state:
+    st.session_state.otp_attempts = 0
 
 # NEW — oauth_state holds the random nonce we sent to Google
 # so we can verify the redirect wasn't forged
@@ -176,6 +186,11 @@ def main_app():
     restore_pending_state(st.session_state.username)
 
     st.write(f"welcome {st.session_state.username}")
+
+    # Logout button in sidebar
+    if st.button("Logout"):
+        st.session_state.clear()
+        st.rerun()
 
     tabs = ["Transaction", "Monitoring", "Balance"]
     tab1, tab2, tab3 = st.tabs(tabs)
@@ -366,21 +381,27 @@ def main_app():
                             st.session_state.generated_otp   = None
                             st.session_state.show_agent      = False
                             st.session_state.chat_history    = []
+                            st.session_state.otp_attempts    = 0
                             st.rerun()
                         else:
-                            st.error("Wrong OTP. Try again.")
-
-                with btn_col2:
-                    if st.button("This wasn't me — block it"):
-                        reverse_transaction(st.session_state.username, meta.get("amount", 0))
-                        st.error("Transaction blocked and amount refunded.")
-                        st.session_state.pending_tx      = None
-                        st.session_state.pending_tx_meta = {}
-                        st.session_state.awaiting_otp    = False
-                        st.session_state.generated_otp   = None
-                        st.session_state.show_agent      = False
-                        st.session_state.chat_history    = []
-                        st.rerun()
+                            st.session_state.otp_attempts += 1
+                            if st.session_state.otp_attempts >= 3:
+                                st.error("Too many wrong attempts. Transaction has been blocked.")
+                                reverse_transaction(
+                                    st.session_state.username,
+                                    meta.get("amount", 0)
+                                )
+                                st.session_state.pending_tx      = None
+                                st.session_state.pending_tx_meta = {}
+                                st.session_state.awaiting_otp    = False
+                                st.session_state.generated_otp   = None
+                                st.session_state.show_agent      = False
+                                st.session_state.chat_history    = []
+                                st.session_state.otp_attempts    = 0
+                                st.rerun()
+                            else:
+                                remaining = 3 - st.session_state.otp_attempts
+                                st.error(f"Wrong OTP. {remaining} attempt(s) remaining.")
 
             elif st.session_state.show_agent:
                 st.write("### Verification Agent")
