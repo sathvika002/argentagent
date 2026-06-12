@@ -1,30 +1,74 @@
 from utils.db import connect
+from datetime import datetime
 
 
-def add_transaction(username, amount, time, location, risk_level, status, report, device=None):
+def check_available_balance(username: str) -> float:
+    """
+    Returns the available balance for a user.
+    Available Balance = Total Balance - Holds (authorization holds)
+    """
+    conn = connect()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT balance FROM users WHERE username = %s", (username,))
+    result = cur.fetchone()
+    balance = result[0] if result else 0
+    
+    conn.close()
+    return balance
+
+
+def add_transaction(username, amount, time, location, risk_level, status, report, device=None, transaction_type="DEBIT"):
+    """
+    Add a transaction to the database.
+    
+    Args:
+        transaction_type: "DEBIT" for outgoing, "CREDIT" for incoming
+        status: "approved", "pending", "reversed", "blocked", "declined"
+    """
     # Guard: report must be a string — run_pipeline sometimes returns the full dict by mistake
     if isinstance(report, dict):
         report = report.get("report", str(report))
 
-    conn = connect()
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO transactions (username, amount, time, location, risk_level, status, report)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """, (username, amount, time, location, risk_level, status, report))
-
-    # only deduct balance if not a blocked/reversed transaction
-    if status not in ("reversed", "blocked"):
-        cur.execute("""
-            UPDATE users SET balance = balance - %s WHERE username = %s
-        """, (amount, username))
-    
     # Server-side amount validation — frontend min_value=0 is not enough
     if not isinstance(amount, (int, float)) or amount <= 0:
         raise ValueError("Invalid transaction amount")
     if amount > 10_000_000:
         raise ValueError("Amount exceeds maximum limit")
+
+    conn = connect()
+    cur = conn.cursor()
+
+    try:
+        # Try insert with transaction_type column
+        cur.execute("""
+            INSERT INTO transactions (username, amount, time, location, risk_level, status, report, transaction_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (username, amount, time, location, risk_level, status, report, transaction_type))
+    except Exception as e:
+        # Fallback if transaction_type column doesn't exist yet (migration not run)
+        if "transaction_type" in str(e):
+            cur.execute("""
+                INSERT INTO transactions (username, amount, time, location, risk_level, status, report)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (username, amount, time, location, risk_level, status, report))
+        else:
+            raise
+
+    # Update balance based on transaction type and status:
+    # DEBIT: subtract if approved/pending (not if blocked/declined/reversed)
+    # CREDIT: always add
+    if transaction_type == "CREDIT":
+        # Credits always add
+        cur.execute("""
+            UPDATE users SET balance = balance + %s WHERE username = %s
+        """, (amount, username))
+    elif transaction_type == "DEBIT":
+        # Debits only deduct if approved or pending (not if blocked/reversed/declined)
+        if status not in ("reversed", "blocked", "declined"):
+            cur.execute("""
+                UPDATE users SET balance = balance - %s WHERE username = %s
+            """, (amount, username))
 
     conn.commit()
     conn.close()
@@ -44,21 +88,35 @@ def update_transaction_status(tx_id, status):
 
 def get_all_transactions(username):
     """
-    Returns (amount, time, location, risk_level, status)
-    Ordered oldest → newest.
+    Returns (id, amount, time, location, risk_level, status, transaction_type)
+    Ordered by ID (newest transaction = highest ID = on top).
     """
     conn = connect()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT amount, time, location, risk_level, status
-        FROM transactions
-        WHERE username = %s
-        ORDER BY id ASC
-    """, (username,))
+    try:
+        # Try with transaction_type column (new schema)
+        cur.execute("""
+            SELECT id, amount, time, location, risk_level, status, COALESCE(transaction_type, 'DEBIT')
+            FROM transactions
+            WHERE username = %s
+            ORDER BY id DESC
+        """, (username,))
+    except Exception as e:
+        # Fallback if transaction_type column doesn't exist yet
+        if "transaction_type" in str(e):
+            cur.execute("""
+                SELECT id, amount, time, location, risk_level, status, 'DEBIT'
+                FROM transactions
+                WHERE username = %s
+                ORDER BY id DESC
+            """, (username,))
+        else:
+            raise
 
     data = cur.fetchall()
     conn.close()
+    
     return data
 
 
@@ -127,3 +185,52 @@ def get_user_balance(username):
     result = cur.fetchone()
     conn.close()
     return result[0] if result else 0
+
+
+def generate_salary_credit(username: str, time: str, amount: float = 80000):
+    """
+    Simulate a salary deposit.
+    Real banks receive salaries regularly (monthly, bi-weekly, etc.)
+    """
+    add_transaction(
+        username=username,
+        amount=amount,
+        time=time,
+        location="Salary Deposit",
+        risk_level="LOW",
+        status="approved",
+        report="Salary credit received",
+        transaction_type="CREDIT"
+    )
+
+
+def generate_refund_credit(username: str, time: str, amount: float):
+    """
+    Simulate a refund from a merchant (e.g., Amazon, canceled subscription).
+    """
+    add_transaction(
+        username=username,
+        amount=amount,
+        time=time,
+        location="Refund",
+        risk_level="LOW",
+        status="approved",
+        report="Refund credit received",
+        transaction_type="CREDIT"
+    )
+
+
+def generate_transfer_credit(username: str, time: str, amount: float, source: str = "Bank Transfer"):
+    """
+    Simulate an incoming transfer from another account (friend, family, NEFT).
+    """
+    add_transaction(
+        username=username,
+        amount=amount,
+        time=time,
+        location=source,
+        risk_level="LOW",
+        status="approved",
+        report=f"Transfer received from {source}",
+        transaction_type="CREDIT"
+    )

@@ -2,9 +2,9 @@ import streamlit as st
 from utils.auth import login_user, signup_user, get_google_auth_url, exchange_code_for_user, login_or_create_sso_user
 from utils.db import init_db, connect
 from utils.transactions import (
-    add_transaction, get_all_transactions,
+    add_transaction, generate_transfer_credit, get_all_transactions,
     update_transaction_status, reverse_transaction,
-    get_user_balance, get_pending_transaction
+    get_user_balance, get_pending_transaction, generate_salary_credit, generate_refund_credit
 )
 from pipeline.run_pipeline import run_pipeline
 from agents.agent import fraud_agent_reply
@@ -12,6 +12,8 @@ import random
 import secrets
 import pandas as pd
 
+# Initialize database (creates tables and runs migrations)
+init_db()
 
 def generate_otp():
     return str(random.randint(100000, 999999))
@@ -220,6 +222,7 @@ def main_app():
 
                 risk_level = result.get("risk_level", "LOW")
                 action     = result.get("action", "ALLOW")
+                decline_reason = result.get("decline_reason", None)
 
                 # FIX: use the time and location the pipeline actually scored against,
                 # not a separately generated pair that may differ (especially under fraud injection)
@@ -229,12 +232,29 @@ def main_app():
 
                 st.session_state.last_result = result
 
-                # ── HIGH → auto-block, no balance deduction ─────────────
-                if action == "BLOCK":
+                # ── DECLINED → insufficient funds ─────────────
+                if decline_reason == "INSUFFICIENT_FUNDS":
                     add_transaction(
                         st.session_state.username,
                         amount, tx_time, tx_location,
-                        risk_level, "reversed", result["report"]
+                        "LOW", "declined", result["report"], transaction_type="DEBIT"
+                    )
+                    current_balance = get_user_balance(st.session_state.username)
+                    st.error(
+                        f" **Transaction Declined**\n\n"
+                        f"Amount: ₹{amount:,.2f}\n\n"
+                        f"**Reason**: Insufficient funds\n\n"
+                        f"Your current balance: ₹{current_balance:,.2f}\n\n"
+                        f"To complete this transaction, you need ₹{amount - current_balance:,.2f} more.\n\n"
+                        f"💡 **Tip**: Simulate a salary deposit or transfer to add funds to your account."
+                    )
+
+                # ── HIGH → auto-block, no balance deduction ─────────────
+                elif action == "BLOCK":
+                    add_transaction(
+                        st.session_state.username,
+                        amount, tx_time, tx_location,
+                        risk_level, "reversed", result["report"], transaction_type="DEBIT"
                     )
                     st.error(
                         f"Transaction of ₹{amount:,.2f} was **blocked** due to high fraud risk. "
@@ -246,7 +266,7 @@ def main_app():
                     add_transaction(
                         st.session_state.username,
                         amount, tx_time, tx_location,
-                        risk_level, "pending", result["report"]
+                        risk_level, "pending", result["report"], transaction_type="DEBIT"
                     )
                     st.session_state.pending_tx = result
                     st.session_state.pending_tx_meta = {
@@ -272,7 +292,7 @@ def main_app():
                     add_transaction(
                         st.session_state.username,
                         amount, tx_time, tx_location,
-                        risk_level, "approved", result["report"]
+                        risk_level, "approved", result["report"], transaction_type="DEBIT"
                     )
                     st.success("transaction approved.")
 
@@ -285,40 +305,42 @@ def main_app():
 
             if data:
                 table_data = []
-                for row in reversed(data):
+                for row in data:
                     table_data.append({
-                        "Amount":   f"₹{row[0]:,.2f}",
-                        "Time":     row[1],
-                        "Location": row[2],
-                        "Risk":     row[3],
-                        "Status":   row[4]
+                        "#":        row[0],  # Transaction ID
+                        "Amount":   f"₹{row[1]:,.2f}",
+                        "Time":     row[2],
+                        "Location": row[3],
+                        "Risk":     row[4],
+                        "Status":   row[5]
                     })
 
-                df = pd.DataFrame(table_data, columns=["Amount", "Time", "Location", "Risk", "Status"])
+                df = pd.DataFrame(table_data, columns=["#", "Amount", "Time", "Location", "Risk", "Status"])
                 df["Time"] = pd.to_datetime(df["Time"], errors="coerce")
-                df = df.sort_values(by="Time", ascending=False)
                 df["Time"] = df["Time"].dt.strftime("%A, %d %B %Y, %I:%M %p")
 
                 st.write("### transaction actions")
 
-                for i, row in enumerate(data[::-1]):
-                    col1, col2, col3, col4, col5, col6 = st.columns(6)
+                for i, row in enumerate(data):
+                    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 
-                    amount_d   = f"₹{row[0]:,.2f}"
-                    time_d     = row[1]
-                    location_d = row[2]
-                    risk_d     = row[3]
-                    status_d   = row[4]
+                    tx_id      = f"#{row[0]}"
+                    amount_d   = f"₹{row[1]:,.2f}"
+                    time_d     = row[2]
+                    location_d = row[3]
+                    risk_d     = row[4]
+                    status_d   = row[5]
 
                     style = "color:red" if risk_d in ["HIGH", "MEDIUM"] else ""
 
-                    col1.markdown(f"<span style='{style}'>{amount_d}</span>",   unsafe_allow_html=True)
-                    col2.markdown(f"<span style='{style}'>{time_d}</span>",     unsafe_allow_html=True)
-                    col3.markdown(f"<span style='{style}'>{location_d}</span>", unsafe_allow_html=True)
-                    col4.markdown(f"<span style='{style}'>{risk_d}</span>",     unsafe_allow_html=True)
-                    col5.markdown(f"<span style='{style}'>{status_d}</span>",   unsafe_allow_html=True)
+                    col1.markdown(f"<span style='{style}'>{tx_id}</span>",     unsafe_allow_html=True)
+                    col2.markdown(f"<span style='{style}'>{amount_d}</span>",   unsafe_allow_html=True)
+                    col3.markdown(f"<span style='{style}'>{time_d}</span>",     unsafe_allow_html=True)
+                    col4.markdown(f"<span style='{style}'>{location_d}</span>", unsafe_allow_html=True)
+                    col5.markdown(f"<span style='{style}'>{risk_d}</span>",     unsafe_allow_html=True)
+                    col6.markdown(f"<span style='{style}'>{status_d}</span>",   unsafe_allow_html=True)
 
-                    if col6.button("View", key=f"view_{i}"):
+                    if col7.button("View", key=f"view_{i}"):
                         st.session_state.selected_tx  = row
                         st.session_state.active_tab   = "Monitoring"
                         st.rerun()
@@ -472,7 +494,50 @@ def main_app():
     with tab3:
         balance = get_user_balance(st.session_state.username)
         st.metric("Current Balance", f"₹{balance:,.2f}")
-
+        
+        st.divider()
+        st.subheader("simulate credits to your account")
+        st.write("In real banking, accounts receive salary, refunds, and transfers. Let's add some!")
+        
+        st.write("### salary ")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            salary_amount = st.number_input("salary amount", min_value=0, value=80000, step=10000, key="salary_input")
+        with col2:
+            if st.button("deposit salary"):
+                from utils.time_utils import get_current_time
+                current_time = get_current_time(inject_fraud=False)
+                generate_salary_credit(st.session_state.username, current_time, salary_amount)
+                st.success(f"Salary of ₹{salary_amount:,.2f} added!")
+                st.rerun()
+        
+        st.write("### refund from merchant")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            refund_amount = st.number_input("Refund amount", min_value=0, value=5000, step=1000, key="refund_input")
+        with col2:
+            if st.button("refund"):
+                from utils.time_utils import get_current_time
+                current_time = get_current_time(inject_fraud=False)
+                generate_refund_credit(st.session_state.username, current_time, refund_amount)
+                st.success(f"Refund of ₹{refund_amount:,.2f} added!")
+                st.rerun()
+        
+        st.write("### bank transfer / UPI receive")
+        col1, col2, col3 = st.columns([2, 2, 1])
+        with col1:
+            transfer_amount = st.number_input("Transfer amount", min_value=0, value=10000, step=5000, key="transfer_input")
+        with col2:
+            source = st.text_input("From (e.g., Friend, Family, Business)", value="Friend", key="transfer_source")
+        with col3:
+            if st.button("receive"):
+                from utils.time_utils import get_current_time
+                current_time = get_current_time(inject_fraud=False)
+                generate_transfer_credit(st.session_state.username, current_time, transfer_amount, source)
+                st.success(f"Transfer of ₹{transfer_amount:,.2f} from {source} added!")
+                st.rerun()
+        
+        st.divider()
 
 # ---------------- ROUTER ----------------
 if st.session_state.logged_in:

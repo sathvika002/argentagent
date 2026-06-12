@@ -59,5 +59,12 @@ def init_db():
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS email TEXT DEFAULT NULL
     """)
+    
+    # NEW — safe migration: adds transaction_type column (DEBIT/CREDIT)
+    cur.execute("""
+        ALTER TABLE transactions
+        ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'DEBIT'
+    """)
+    
     conn.commit()
     conn.close()

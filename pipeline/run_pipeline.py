@@ -21,6 +21,7 @@ from utils.location import get_location
 from agents.analyzer import analyze_transaction
 from agents.risk_scorer import score_risk
 from agents.reporter import generate_report
+from utils.transactions import check_available_balance
 
 
 # ── Fraud injection rate ──────────────────────────────────────────
@@ -221,6 +222,58 @@ def node_verify_and_report(state: TransactionState) -> dict:
 
 
 # ─────────────────────────────────────────
+# FUNDS CHECK NODE (ADDED)
+# ─────────────────────────────────────────
+
+def node_check_funds(state: TransactionState) -> dict:
+    """
+    Check if the account has sufficient balance BEFORE risk scoring.
+    
+    This is the first validation gate:
+    1. Account exists? ✓ (already know they're logged in)
+    2. Card active? ✓ (assumed for now)
+    3. Enough funds? ← THIS CHECK
+    
+    If funds insufficient → DECLINE
+    Otherwise → continue to risk engine
+    """
+    username = state["username"]
+    amount = state["amount"]
+    
+    available_balance = check_available_balance(username)
+    
+    print(f"DEBUG Funds Check: {username} | Balance: ₹{available_balance} | Amount: ₹{amount}")
+    
+    if amount > available_balance:
+        # Insufficient funds
+        return {
+            "action": "BLOCK",  # using BLOCK to mean "decline before risk engine"
+            "report": f"DECLINED: Insufficient funds. Available: ₹{available_balance}, Required: ₹{amount}",
+            "decline_reason": "INSUFFICIENT_FUNDS"
+        }
+    
+    # ✅ Funds available — continue to risk engine
+    return {}
+
+
+# ─────────────────────────────────────────
+# CONDITIONAL EDGE FOR FUNDS CHECK
+# ─────────────────────────────────────────
+
+def route_after_funds_check(state: TransactionState) -> str:
+    """
+    After funds check, decide: if already blocked (insufficient funds), stop.
+    Otherwise continue to risk analysis.
+    """
+    # If funds check already declined, don't proceed to risk engine
+    if state.get("decline_reason") == "INSUFFICIENT_FUNDS":
+        return "block"
+    
+    # Funds available, continue to risk analysis
+    return "analyze"
+
+
+# ─────────────────────────────────────────
 # CONDITIONAL EDGE
 # ─────────────────────────────────────────
 
@@ -242,6 +295,7 @@ def _build_graph():
 
     g.add_node("load_context",      node_load_context)
     g.add_node("enrich",            node_enrich)
+    g.add_node("check_funds",       node_check_funds)  # ← NEW
     g.add_node("analyze",           node_analyze)
     g.add_node("score",             node_score)
     g.add_node("block",             node_block)
@@ -250,7 +304,14 @@ def _build_graph():
 
     g.add_edge(START,          "load_context")
     g.add_edge("load_context", "enrich")
-    g.add_edge("enrich",       "analyze")
+    g.add_edge("enrich",       "check_funds")  # ← FUNDS CHECK FIRST
+    
+    # ← CONDITIONAL: if insufficient funds, block; otherwise analyze
+    g.add_conditional_edges("check_funds", route_after_funds_check, {
+        "analyze": "analyze",
+        "block":   "block",
+    })
+    
     g.add_edge("analyze",      "score")
 
     g.add_conditional_edges("score", route_by_risk, {
@@ -297,6 +358,7 @@ def run_pipeline(transaction_input: dict) -> dict:
         "breakdown":      {},
         "action":         "ALLOW",
         "report":         None,
+        "decline_reason": None,  # ← NEW
     }
 
     result = _graph.invoke(initial)

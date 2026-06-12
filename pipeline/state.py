@@ -18,5 +18,6 @@ class TransactionState(TypedDict):
     risk_level: str
     flags: List[str]
     breakdown: Dict
-    action: str          # ALLOW / VERIFY / BLOCK
+    action: str          # ALLOW / VERIFY / BLOCK / DECLINED
     report: Optional[str]
+    decline_reason: Optional[str]  # INSUFFICIENT_FUNDS, etc.
