@@ -1,51 +1,123 @@
 from utils.db import connect
 import os
 import requests
-from urllib.parse import urlencode
 import bcrypt
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8501/")
 
+MAX_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
 
-def signup_user(username, password, email=None):
-    hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+
+def signup_user(username, password):
     conn = connect()
     cur = conn.cursor()
     try:
+        hashed = bcrypt.hashpw(
+            password.encode(), bcrypt.gensalt()
+        ).decode()
         cur.execute(
-            "INSERT INTO users (username, password, email) VALUES (%s, %s, %s)",
-            (username, hashed.decode("utf-8"), email)
+            "INSERT INTO users (username, password) VALUES (%s, %s)",
+            (username, hashed)
         )
         conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        conn.close()
-        return False  # username already taken
+    except:
+        pass
+    conn.close()
 
 
 def login_user(username, password):
     conn = connect()
     cur = conn.cursor()
-    cur.execute("SELECT password FROM users WHERE username=%s", (username,))
+
+    # Check if account is locked — comparison done in Postgres, avoids timezone bugs
+    cur.execute(
+        "SELECT (locked_until IS NOT NULL AND locked_until > NOW()) FROM users WHERE username=%s",
+        (username,)
+    )
+    row = cur.fetchone()
+
+    if row and row[0]:
+        conn.close()
+        return "LOCKED"
+
+    # Check password
+    cur.execute(
+        "SELECT password FROM users WHERE username=%s",
+        (username,)
+    )
     result = cur.fetchone()
-    conn.close()
-    if not result or result[0] is None:
+
+    if not result:
+        conn.close()
         return False
-    return bcrypt.checkpw(password.encode("utf-8"), result[0].encode("utf-8"))
+
+    stored_hash = result[0]
+
+    # Handle both bcrypt hashes and legacy plaintext passwords
+    try:
+        is_valid = bcrypt.checkpw(password.encode(), stored_hash.encode())
+    except Exception:
+        is_valid = (password == stored_hash)
+
+    if is_valid:
+        # Correct password — reset the counter and clear any lock
+        cur.execute(
+            "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE username=%s",
+            (username,)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    else:
+        # Wrong password — increment attempts, lock if threshold reached
+        cur.execute(
+            """
+            UPDATE users 
+            SET failed_attempts = failed_attempts + 1,
+                locked_until = CASE 
+                    WHEN failed_attempts + 1 >= %s 
+                    THEN NOW() + INTERVAL '15 minutes'
+                    ELSE NULL 
+                END
+            WHERE username=%s
+            """,
+            (MAX_ATTEMPTS, username)
+        )
+        conn.commit()
+
+        cur.execute(
+            "SELECT failed_attempts FROM users WHERE username=%s",
+            (username,)
+        )
+        attempts = cur.fetchone()[0]
+        conn.close()
+
+        if attempts >= MAX_ATTEMPTS:
+            return "LOCKED"
+        return False
 
 
 def verify_user_password(username, password):
     conn = connect()
     cur = conn.cursor()
-    cur.execute("SELECT password FROM users WHERE username=%s", (username,))
+    cur.execute(
+        "SELECT password FROM users WHERE username=%s",
+        (username,)
+    )
     result = cur.fetchone()
     conn.close()
-    if not result or result[0] is None:
+    if not result:
         return False
-    return bcrypt.checkpw(password.encode("utf-8"), result[0].encode("utf-8"))
+    stored = result[0]
+    try:
+        return bcrypt.checkpw(password.encode(), stored.encode())
+    except Exception:
+        return stored == password
 
 
 def get_google_auth_url(state: str) -> str:
@@ -88,36 +160,19 @@ def exchange_code_for_user(code: str) -> dict | None:
 def login_or_create_sso_user(google_id: str, email: str, name: str) -> str:
     conn = connect()
     cur  = conn.cursor()
-
-    # 1. returning SSO user — already linked
     cur.execute("SELECT username FROM users WHERE google_id = %s", (google_id,))
     row = cur.fetchone()
     if row:
         conn.close()
         return row[0]
-
-    # 2. email matches an existing password account — link them
-    cur.execute("SELECT username FROM users WHERE email = %s", (email,))
-    row = cur.fetchone()
-    if row:
-        cur.execute(
-            "UPDATE users SET google_id = %s WHERE email = %s",
-            (google_id, email)
-        )
-        conn.commit()
-        conn.close()
-        return row[0]
-
-    # 3. brand new user — create account
     username = email.split("@")[0]
     cur.execute("SELECT username FROM users WHERE username = %s", (username,))
     if cur.fetchone():
-        username = email  # fallback to full email if username taken
-
+        username = email
     cur.execute(
-        "INSERT INTO users (username, password, email, google_id) VALUES (%s, %s, %s, %s)",
-        (username, None, email, google_id)
+        "INSERT INTO users (username, password, google_id) VALUES (%s, %s, %s)",
+        (username, None, google_id)
     )
     conn.commit()
     conn.close()
-    return username
+    return username 

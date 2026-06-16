@@ -11,6 +11,7 @@ from agents.agent import fraud_agent_reply
 import random
 import secrets
 import pandas as pd
+from datetime import datetime, timedelta
 
 # Initialize database (creates tables and runs migrations)
 init_db()
@@ -140,10 +141,14 @@ def auth_page():
         password = st.text_input("Password", type="password", key="login_password")
 
         if st.button("Login"):
-            if login_user(username, password):
+            result = login_user(username, password)
+            if result == True:
                 st.session_state.logged_in = True
                 st.session_state.username = username
+                st.session_state.login_time = datetime.now()
                 st.rerun()
+            elif result == "LOCKED":
+                st.error("Account locked due to too many failed attempts. Try again in 15 minutes.")
             else:
                 st.error("Invalid credentials")
 
@@ -185,6 +190,19 @@ def auth_page():
 
 # ---------------- MAIN APP ----------------
 def main_app():
+    # Session expiry — 15 minutes of inactivity
+    SESSION_TIMEOUT_MINUTES = 15
+    if "login_time" in st.session_state:
+        elapsed = (datetime.now() - st.session_state.login_time).seconds / 60
+        if elapsed > SESSION_TIMEOUT_MINUTES:
+            st.session_state.clear()
+            st.warning("Session expired. Please log in again.")
+            st.rerun()
+    else:
+        st.session_state.login_time = datetime.now()
+
+    # Update last activity time on every interaction
+    st.session_state.login_time = datetime.now()
     restore_pending_state(st.session_state.username)
 
     st.write(f"welcome {st.session_state.username}")
