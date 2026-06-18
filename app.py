@@ -1,5 +1,5 @@
 import streamlit as st
-from utils.auth import login_user, signup_user, get_google_auth_url, exchange_code_for_user, login_or_create_sso_user
+from utils.auth import login_user, signup_user, get_google_auth_url, exchange_code_for_user, login_or_create_sso_user, reset_password
 from utils.db import init_db, connect
 from utils.transactions import (
     add_transaction, generate_transfer_credit, get_all_transactions,
@@ -69,6 +69,19 @@ if "otp_attempts" not in st.session_state:
 if "oauth_state" not in st.session_state:
     st.session_state.oauth_state = None
 
+# Password reset flow state
+if "reset_flow" not in st.session_state:
+    st.session_state.reset_flow = None  # None, "enter_username", "verify_otp", "set_password"
+
+if "reset_username" not in st.session_state:
+    st.session_state.reset_username = None
+
+if "reset_otp" not in st.session_state:
+    st.session_state.reset_otp = None
+
+if "reset_otp_attempts" not in st.session_state:
+    st.session_state.reset_otp_attempts = 0
+
 
 # ---------------- GOOGLE OAUTH CALLBACK HANDLER ---------------
 
@@ -132,25 +145,141 @@ def restore_pending_state(username: str):
         ]
 
 
-# ---------------- AUTH ----------------
+# --------- PASSWORD RESET FLOW ---------
+def password_reset_page():
+    st.subheader("Forgot Password?")
+    
+    # Step 1: Enter Username
+    if st.session_state.reset_flow is None or st.session_state.reset_flow == "enter_username":
+        st.write("Enter your username to reset your password.")
+        reset_user = st.text_input("Username", key="reset_username_input", value=st.session_state.reset_username or "")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            if st.button("Send OTP", key="send_otp_btn", use_container_width=True):
+                if not reset_user:
+                    st.error("Please enter your username")
+                else:
+                    conn = connect()
+                    cur = conn.cursor()
+                    cur.execute("SELECT username FROM users WHERE username = %s", (reset_user,))
+                    if cur.fetchone():
+                        st.session_state.reset_username = reset_user
+                        st.session_state.reset_otp = generate_otp()
+                        st.session_state.reset_flow = "verify_otp"
+                        st.session_state.reset_otp_attempts = 0
+                        conn.close()
+                        st.success(f"OTP sent to {reset_user}")
+                        st.info(f"**Your OTP:** `{st.session_state.reset_otp}`")  # Show for testing
+                        st.rerun()
+                    else:
+                        st.error("Username not found")
+                        conn.close()
+        
+        with col2:
+            if st.button("Back", key="back_to_login"):
+                st.session_state.reset_flow = None
+                st.session_state.reset_username = None
+                st.session_state.reset_otp = None
+                st.rerun()
+    
+    # Step 2: Verify OTP
+    elif st.session_state.reset_flow == "verify_otp":
+        st.write(f"Enter the OTP sent to **{st.session_state.reset_username}**")
+        st.info("Check your email or SMS for the OTP. (For testing, the OTP is shown below)")
+        st.code(f"{st.session_state.reset_otp}", language=None)
+        
+        entered_otp = st.text_input("Enter 6-digit OTP", key="otp_input", max_chars=6)
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            if st.button("Verify OTP", key="verify_otp_btn", use_container_width=True):
+                if not entered_otp:
+                    st.error("Please enter OTP")
+                elif entered_otp == st.session_state.reset_otp:
+                    st.session_state.reset_flow = "set_password"
+                    st.success("✓ OTP verified!")
+                    st.rerun()
+                else:
+                    st.session_state.reset_otp_attempts += 1
+                    remaining = 3 - st.session_state.reset_otp_attempts
+                    st.error(f"Invalid OTP. {remaining} attempts remaining.")
+                    
+                    if st.session_state.reset_otp_attempts >= 3:
+                        st.session_state.reset_flow = None
+                        st.session_state.reset_username = None
+                        st.session_state.reset_otp = None
+                        st.error("Too many failed attempts. Please start over.")
+                        st.rerun()
+        
+        with col2:
+            if st.button("Back", key="back_otp"):
+                st.session_state.reset_flow = "enter_username"
+                st.rerun()
+    
+    # Step 3: Set New Password
+    elif st.session_state.reset_flow == "set_password":
+        st.write(f"Set a new password for **{st.session_state.reset_username}**")
+        
+        new_password = st.text_input("New Password", type="password", key="new_pwd")
+        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_pwd")
+        
+        if st.button("Reset Password", use_container_width=True, key="reset_pwd_btn"):
+            if not new_password or not confirm_password:
+                st.error("Please fill in all fields")
+            elif len(new_password) < 6:
+                st.error("Password must be at least 6 characters")
+            elif new_password != confirm_password:
+                st.error("Passwords don't match")
+            else:
+                # Reset password in database
+                if reset_password(st.session_state.reset_username, new_password):
+                    st.success("Password reset successful!")
+                    st.toast("Your password has been reset. Please log in with your new password.")
+                    st.info("You can now log in with your new password.")
+                    
+                    # Clear reset state
+                    st.session_state.reset_flow = None
+                    st.session_state.reset_username = None
+                    st.session_state.reset_otp = None
+                    st.session_state.reset_otp_attempts = 0
+                    
+                    if st.button("Back to Login"):
+                        st.rerun()
+                else:
+                    st.error("Failed to reset password. Please try again.")
+
+# --------- AUTH PAGE ---------
 def auth_page():
+    # Show password reset page if user clicked "Forgot Password"
+    if st.session_state.reset_flow is not None:
+        password_reset_page()
+        return
+    
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
     with tab1:
         username = st.text_input("Username", key="login_username")
         password = st.text_input("Password", type="password", key="login_password")
 
-        if st.button("Login"):
-            result = login_user(username, password)
-            if result == True:
-                st.session_state.logged_in = True
-                st.session_state.username = username
-                st.session_state.login_time = datetime.now()
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("Login", use_container_width=True):
+                result = login_user(username, password)
+                if result == True:
+                    st.session_state.logged_in = True
+                    st.session_state.username = username
+                    st.session_state.login_time = datetime.now()
+                    st.rerun()
+                elif result == "LOCKED":
+                    st.error("Account locked due to too many failed attempts. Try again in 15 minutes.")
+                else:
+                    st.error("Invalid credentials")
+        
+        with col2:
+            if st.button("Forgot Password?", use_container_width=True, key="forgot_pwd_btn"):
+                st.session_state.reset_flow = "enter_username"
                 st.rerun()
-            elif result == "LOCKED":
-                st.error("Account locked due to too many failed attempts. Try again in 15 minutes.")
-            else:
-                st.error("Invalid credentials")
 
         st.divider()
         st.caption("or continue with")

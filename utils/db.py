@@ -25,7 +25,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
             password TEXT,
-            balance FLOAT DEFAULT {DEFAULT_BALANCE}
+            balance FLOAT DEFAULT {DEFAULT_BALANCE},
+            failed_attempts INT DEFAULT 0,
+            locked_until TIMESTAMP DEFAULT NULL
         )
     """)
 
@@ -64,6 +66,16 @@ def init_db():
     cur.execute("""
         ALTER TABLE transactions
         ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'DEBIT'
+    """)
+
+    # Migration: add failed_attempts and locked_until for account lockout feature
+    cur.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0
+    """)
+    cur.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP DEFAULT NULL
     """)
     
     conn.commit()
