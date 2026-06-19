@@ -266,13 +266,12 @@ def auth_page():
         with col1:
             if st.button("Login", use_container_width=True):
                 result = login_user(username, password)
-                if result == True:
+                if result is True:
                     st.session_state.logged_in = True
                     st.session_state.username = username
-                    st.session_state.login_time = datetime.now()
                     st.rerun()
                 elif result == "LOCKED":
-                    st.error("Account locked due to too many failed attempts. Try again in 15 minutes.")
+                    st.error("Account locked. Try again in 15 minutes.")
                 else:
                     st.error("Invalid credentials")
         
