@@ -182,9 +182,9 @@ def test_openai_api_timeout_fallback():
     When OpenAI times out mid-verification, agent.py should have a safe fallback.
     Test that we don't lose the transaction or crash.
     """
-    with patch('agents.agent.client.chat.completions.create') as mock_openai:
+    with patch('agents.agent.get_client') as mock_get_client:
         # Simulate API timeout
-        mock_openai.side_effect = Exception("API timeout after 30s")
+        mock_get_client.return_value.chat.completions.create.side_effect = Exception("API timeout after 30s")
         
         # Your agent should catch this and return a safe default
         # (e.g., "Unable to verify, treat as HIGH risk")
@@ -206,7 +206,6 @@ def test_openai_api_timeout_fallback():
         except Exception as e:
             # If we DO crash, fraud-detection is broken
             pytest.fail(f"Agent crashed on API timeout: {e}")
-
 
 def test_location_service_returns_null():
     """Location service dies → handler still scores safely."""
