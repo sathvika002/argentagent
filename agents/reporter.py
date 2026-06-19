@@ -4,12 +4,16 @@ from openai import OpenAI
 
 load_dotenv()
 
-api_key = os.getenv("OPENAI_API_KEY")
+_client = None
 
-if not api_key:
-    raise ValueError("API key not found. Check your .env file.")
-
-client = OpenAI(api_key=api_key)
+def get_client():
+    global _client
+    if _client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("API key not found. Check your .env file.")
+        _client = OpenAI(api_key=api_key)
+    return _client
 
 
 def generate_report(state):
@@ -44,7 +48,7 @@ Rules:
 - No paragraphs, no storytelling
 """
 
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1

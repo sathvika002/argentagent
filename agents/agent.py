@@ -11,7 +11,13 @@ Given a risk result and user's message, it:
 import os
 from openai import OpenAI
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _client
 
 
 SYSTEM_PROMPT = """You are ArgentAgent, a friendly but firm fraud detection assistant for a banking app.
@@ -70,7 +76,7 @@ The user just said: "{user_message}"
     messages.append({"role": "user", "content": context})
 
     try:
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             temperature=0.3,
