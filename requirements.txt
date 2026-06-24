@@ -1,13 +1,12 @@
 streamlit
-langchain
-langgraph
-crewai
 openai
 pandas
 numpy
-geopy
 python-dotenv
 psycopg2-binary
 scikit-learn
 requests
-pytest
+langgraph
+langchain
+bcrypt
+geopy
