@@ -79,12 +79,16 @@ The user just said: "{user_message}"
     messages.append({"role": "user", "content": context})
 
     try:
+        print("AGENT: building messages", flush=True)  # ADD
         response = get_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             temperature=0.3,
             max_tokens=200,
+            timeout=15,
         )
+        print("AGENT: got response", flush=True)  # ADD
+
         raw = response.choices[0].message.content.strip()
 
         import json
