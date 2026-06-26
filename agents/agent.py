@@ -16,7 +16,10 @@ _client = None
 def get_client():
     global _client
     if _client is None:
-        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not set. Check Azure App Settings.")
+        _client = OpenAI(api_key=api_key)
     return _client
 
 
