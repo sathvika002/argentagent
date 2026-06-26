@@ -44,6 +44,9 @@ Respond ONLY with valid JSON in this exact format:
 
 
 def fraud_agent_reply(risk_result: dict, user_message: str, history: list = None) -> dict:
+    print("AGENT: fraud_agent_reply called", flush=True)  # ADD
+    transaction = risk_result.get("transaction", {})
+    ...
     """
     risk_result: the full pipeline output
     user_message: what the user just typed
