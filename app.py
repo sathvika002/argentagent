@@ -138,7 +138,7 @@ def restore_pending_state(username: str):
         "anomalies":   [],
         "report":      report or "",
     }
-    st.session_state.show_agent = True
+    st.session_state.show_agent = True  # ← is this line there?
     if not st.session_state.chat_history:
         st.session_state.chat_history = [
             {"role": "assistant", "content": "This transaction looks unusual. Was this you?"}
