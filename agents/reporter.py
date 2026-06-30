@@ -2,6 +2,8 @@ from dotenv import load_dotenv
 import os
 from openai import OpenAI
 
+from utils.watermark import embed_watermark
+
 load_dotenv()
 
 _client = None
@@ -17,14 +19,11 @@ def get_client():
 
 
 def generate_report(state):
-
     risk_score  = state.get("risk_score", 0)
     risk_level  = state.get("risk_level", "UNKNOWN")
     flags       = state.get("flags", [])
     breakdown   = state.get("breakdown", {})
-    transaction = state.get("transaction", {})
 
-    # Build a readable breakdown string
     breakdown_lines = "\n".join(
         f"  {k}: +{v}" for k, v in breakdown.items() if v > 0
     )
@@ -54,6 +53,10 @@ Rules:
         temperature=0.1
     )
 
+    raw_report = response.choices[0].message.content
+    username = state.get("username", "")
+    watermarked_report = embed_watermark(raw_report, username)
+
     return {
-        "report": response.choices[0].message.content
+        "report": watermarked_report
     }

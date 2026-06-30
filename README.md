@@ -154,3 +154,31 @@ DEFAULT_BALANCE        = 500000  # ₹ — starting balance for new users
 To enable fraud injection for testing:
 python# pipeline/run_pipeline.py
 FRAUD_INJECTION_RATE = 0.15   # 15% of transactions get injected signals
+
+
+## CI/CD Pipeline
+
+ArgentAgent uses an automated pipeline that tests every change before it's allowed to reach production.
+
+### Continuous Integration (Harness)
+
+- On every push to GitHub, Harness spins up a clean container and runs the full test suite (`pytest test_pipeline.py -v`)
+- 10 automated tests covering:
+  - **Risk scoring logic** — clean transactions stay LOW, impossible travel alone triggers MEDIUM, impossible travel + large amount triggers BLOCK, high velocity alone triggers MEDIUM, past fraud + chargebacks alone triggers MEDIUM, odd-hour-only transactions correctly stay LOW, and a regression test for the time/location signal suppression rule
+  - **Authentication** — account lockout, unknown username handling, and successful login, all tested against a mocked database (no live Postgres needed in CI)
+  - **Resilience** — the fraud verification agent falls back safely to an "UNCLEAR" response if the OpenAI API times out, instead of crashing
+- Tests run in a fully isolated environment with no `.env` file and no pre-installed dependencies, proving the app doesn't secretly depend on local machine setup
+
+### Continuous Deployment (GitHub Actions → Azure)
+
+- Every push to `main` triggers a three-stage GitHub Actions workflow: `build → test → deploy`
+- The `test` stage waits for Harness to report a passing status check before allowing deployment to proceed
+- If Harness tests fail, deployment is automatically blocked — broken code never reaches Azure
+- On success, the app is automatically deployed to Azure App Service (`argentagent-app`)
+
+### Infrastructure (Azure)
+
+- **Azure PostgreSQL Flexible Server** — production database, network-restricted so only the app and the developer's IP can connect
+- **Azure App Service** (Linux, Python 3.12, B1 tier) — hosts the live Streamlit app
+- **Environment variables** — DB credentials, OpenAI API key, and Google OAuth secrets are stored as App Service Application Settings (not committed to the repo)
+- Live at: `https://argentagent-app-gjgbakbycbd8g6fc.centralindia-01.azurewebsites.net`
