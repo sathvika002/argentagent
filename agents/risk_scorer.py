@@ -153,6 +153,21 @@ def score_risk(transaction, user_profile, signals):
         flags.append("amount_elevated")
 
     # --------------------
+    # DIGIT PATTERN
+    # --------------------
+    if signals.get("amount_pattern_flag"):
+        pattern_type = signals.get("amount_pattern_type")
+        if pattern_type == "sequential_digits":
+            breakdown["transaction"] += 12
+            flags.append("sequential_amount_pattern")
+        elif pattern_type == "repeating_digits":
+            breakdown["transaction"] += 10
+            flags.append("repeating_amount_pattern")
+        elif pattern_type == "round_number":
+            breakdown["transaction"] += 4
+            flags.append("round_amount_pattern")
+
+    # --------------------
     # PREVENT OVERSTACKING
     # --------------------
     if breakdown["transaction"] < 20:

@@ -3,6 +3,8 @@ from sklearn.ensemble import IsolationForest
 from datetime import datetime
 from config import HOME_COUNTRY
 
+from utils.pattern_detector import detect_amount_pattern
+
 # ONE model per user instead of one global model
 models = {}
 
@@ -173,5 +175,10 @@ def analyze_transaction(state):
     # --------------------
     signals.update(detect_anomaly(tx, history_len=len(history), username=username))
 
+    # --------------------
+    # DIGIT PATTERN (steganographic / scripted-amount detection)
+    # --------------------
+    signals.update(detect_amount_pattern(amount))
+    
     state["signals"] = signals
     return state
