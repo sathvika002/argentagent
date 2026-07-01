@@ -78,6 +78,12 @@ def init_db():
         ALTER TABLE users
         ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP DEFAULT NULL
     """)
+
+    # Migration: add role column for role-based access (customer/admin)
+    cur.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'customer'
+    """)
     
     conn.commit()
     conn.close()

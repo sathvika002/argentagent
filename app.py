@@ -27,6 +27,8 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = None
 
+if "role" not in st.session_state:
+    st.session_state.role = "customer"
 
 if "show_agent" not in st.session_state:
     st.session_state.show_agent = False
@@ -110,6 +112,15 @@ def handle_oauth_callback():
 
     st.session_state.logged_in = True
     st.session_state.username  = username
+    
+    # Fetch role from DB after SSO login
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute("SELECT role FROM users WHERE username = %s", (username,))
+    role_row = cur.fetchone()
+    conn.close()
+    st.session_state.role = role_row[0] if role_row else "customer"
+    
     st.rerun()
 
 handle_oauth_callback()
@@ -269,6 +280,15 @@ def auth_page():
                 if result is True:
                     st.session_state.logged_in = True
                     st.session_state.username = username
+                    
+                    # Fetch role from DB after login
+                    conn = connect()
+                    cur = conn.cursor()
+                    cur.execute("SELECT role FROM users WHERE username = %s", (username,))
+                    role_row = cur.fetchone()
+                    conn.close()
+                    st.session_state.role = role_row[0] if role_row else "customer"
+                    
                     st.rerun()
                 elif result == "LOCKED":
                     st.error("Account locked. Try again in 15 minutes.")
@@ -340,8 +360,15 @@ def main_app():
         st.session_state.clear()
         st.rerun()
 
+    # Build tabs list — only add Admin Tools if user role is admin
     tabs = ["Transaction", "Monitoring", "Balance"]
-    tab1, tab2, tab3 = st.tabs(tabs)
+    if st.session_state.role == "admin":
+        tabs.append("Admin Tools")
+    
+    # Create tab objects
+    tab_objects = st.tabs(tabs)
+    tab1, tab2, tab3 = tab_objects[:3]
+    tab4 = tab_objects[3] if len(tab_objects) > 3 else None
 
     # ======================================================
     # TRANSACTION TAB
@@ -355,92 +382,92 @@ def main_app():
                 "Head to the **Monitoring** tab to verify it."
             )
 
-        with st.form("transaction_form", clear_on_submit=True):
-            amount = st.number_input("enter amount", min_value=0)
-            submitted = st.form_submit_button("save transaction")
+        if st.session_state.get("_tx_clear"):
+            del st.session_state["tx_amount"]
+            st.session_state._tx_clear = False
 
-            if submitted:
-                # Pass only username + amount — pipeline generates everything else
-                result = run_pipeline({
-                    "username": st.session_state.username,
-                    "amount":   amount,
-                })
+        amount = st.number_input("enter amount", min_value=0, key="tx_amount")
+        if st.button("save transaction"):
+            # Pass only username + amount — pipeline generates everything else
+            result = run_pipeline({
+                "username": st.session_state.username,
+                "amount":   amount,
+            })
 
-                risk_level = result.get("risk_level", "LOW")
-                action     = result.get("action", "ALLOW")
-                decline_reason = result.get("decline_reason", None)
+            risk_level = result.get("risk_level", "LOW")
+            action     = result.get("action", "ALLOW")
+            decline_reason = result.get("decline_reason", None)
 
-                # FIX: use the time and location the pipeline actually scored against,
-                # not a separately generated pair that may differ (especially under fraud injection)
-                scored_tx  = result.get("transaction", {})
-                tx_time    = scored_tx.get("timestamp", "")
-                tx_location = scored_tx.get("location", "")
+            scored_tx   = result.get("transaction", {})
+            tx_time     = scored_tx.get("timestamp", "")
+            tx_location = scored_tx.get("location", "")
 
-                st.session_state.last_result = result
+            st.session_state.last_result = result
+            st.session_state._tx_clear = True  # clears the input on next render
 
-                # ── DECLINED → insufficient funds ─────────────
-                if decline_reason == "INSUFFICIENT_FUNDS":
-                    add_transaction(
-                        st.session_state.username,
-                        amount, tx_time, tx_location,
-                        "LOW", "declined", result["report"], transaction_type="DEBIT"
-                    )
-                    current_balance = get_user_balance(st.session_state.username)
-                    st.error(
-                        f" **Transaction Declined**\n\n"
-                        f"Amount: ₹{amount:,.2f}\n\n"
-                        f"**Reason**: Insufficient funds\n\n"
-                        f"Your current balance: ₹{current_balance:,.2f}\n\n"
-                        f"To complete this transaction, you need ₹{amount - current_balance:,.2f} more.\n\n"
-                        f"💡 **Tip**: Simulate a salary deposit or transfer to add funds to your account."
-                    )
+            # ── DECLINED → insufficient funds ─────────────
+            if decline_reason == "INSUFFICIENT_FUNDS":
+                add_transaction(
+                    st.session_state.username,
+                    amount, tx_time, tx_location,
+                    "LOW", "declined", result["report"], transaction_type="DEBIT"
+                )
+                current_balance = get_user_balance(st.session_state.username)
+                st.error(
+                    f" **Transaction Declined**\n\n"
+                    f"Amount: ₹{amount:,.2f}\n\n"
+                    f"**Reason**: Insufficient funds\n\n"
+                    f"Your current balance: ₹{current_balance:,.2f}\n\n"
+                    f"To complete this transaction, you need ₹{amount - current_balance:,.2f} more.\n\n"
+                    f"💡 **Tip**: Simulate a salary deposit or transfer to add funds to your account."
+                )
 
-                # ── HIGH → auto-block, no balance deduction ─────────────
-                elif action == "BLOCK":
-                    add_transaction(
-                        st.session_state.username,
-                        amount, tx_time, tx_location,
-                        risk_level, "reversed", result["report"], transaction_type="DEBIT"
-                    )
-                    st.error(
-                        f"Transaction of ₹{amount:,.2f} was **blocked** due to high fraud risk. "
-                        "Your balance was not charged."
-                    )
+            # ── HIGH → auto-block, no balance deduction ─────────────
+            elif action == "BLOCK":
+                add_transaction(
+                    st.session_state.username,
+                    amount, tx_time, tx_location,
+                    risk_level, "reversed", result["report"], transaction_type="DEBIT"
+                )
+                st.error(
+                    f"Transaction of ₹{amount:,.2f} was **blocked** due to high fraud risk. "
+                    "Your balance was not charged."
+                )
 
-                # ── MEDIUM → pending, needs verification ─────────────────
-                elif action == "VERIFY":
-                    add_transaction(
-                        st.session_state.username,
-                        amount, tx_time, tx_location,
-                        risk_level, "pending", result["report"], transaction_type="DEBIT"
-                    )
-                    st.session_state.pending_tx = result
-                    st.session_state.pending_tx_meta = {
-                        "amount":     amount,
-                        "time":       tx_time,
-                        "location":   tx_location,
-                        "risk_level": risk_level,
-                    }
-                    st.session_state.show_agent      = True
-                    st.session_state.awaiting_otp    = False
-                    st.session_state.generated_otp   = None
-                    st.session_state.chat_history    = [
-                        {"role": "assistant",
-                         "content": "This transaction looks unusual. Was this you?"}
-                    ]
-                    st.warning(
-                        "Suspicious transaction detected. "
-                        "Go to the **Monitoring** tab to verify it."
-                    )
+            # ── MEDIUM → pending, needs verification ─────────────────
+            elif action == "VERIFY":
+                add_transaction(
+                    st.session_state.username,
+                    amount, tx_time, tx_location,
+                    risk_level, "pending", result["report"], transaction_type="DEBIT"
+                )
+                st.session_state.pending_tx = result
+                st.session_state.pending_tx_meta = {
+                    "amount":     amount,
+                    "time":       tx_time,
+                    "location":   tx_location,
+                    "risk_level": risk_level,
+                }
+                st.session_state.show_agent      = True
+                st.session_state.awaiting_otp    = False
+                st.session_state.generated_otp   = None
+                st.session_state.chat_history    = [
+                    {"role": "assistant",
+                     "content": "This transaction looks unusual. Was this you?"}
+                ]
+                st.warning(
+                    "Suspicious transaction detected. "
+                    "Go to the **Monitoring** tab to verify it."
+                )
 
-                # ── LOW → approve normally ───────────────────────────────
-                elif action == "ALLOW":
-                    add_transaction(
-                        st.session_state.username,
-                        amount, tx_time, tx_location,
-                        risk_level, "approved", result["report"], transaction_type="DEBIT"
-                    )
-                    st.success("transaction approved.")
+            # ── LOW → approve normally ───────────────────────────────
+            elif action == "ALLOW":
+                add_transaction(
+                    st.session_state.username,
+                    amount, tx_time, tx_location,
+                    risk_level, "approved", result["report"], transaction_type="DEBIT"
+                )
+                st.success("transaction approved.")
 
         # -------- TRANSACTION HISTORY --------
         if st.button("transaction history"):
@@ -684,6 +711,52 @@ def main_app():
                 st.rerun()
         
         st.divider()
+
+    # ======================================================
+    # ADMIN TOOLS TAB — Watermark Decoder (admin only)
+    # ======================================================
+    if tab4 is not None:
+        with tab4:
+            st.subheader("Watermark Decoder")
+            st.write("Paste a report to extract the hidden user watermark.")
+            
+            from utils.watermark import extract_watermark, _username_to_code
+            
+            # Fetch all known users from DB
+            conn = connect()
+            cur = conn.cursor()
+            cur.execute("SELECT username FROM users")
+            known_users = [row[0] for row in cur.fetchall()]
+            conn.close()
+            
+            report_paste = st.text_area(
+                "Paste leaked/suspicious report text:",
+                height=200,
+                key="watermark_paste"
+            )
+            
+            if st.button("Decode Watermark", key="decode_btn"):
+                if not report_paste.strip():
+                    st.warning("Please paste a report first.")
+                else:
+                    extracted_bits = extract_watermark(report_paste)
+                    
+                    if not extracted_bits:
+                        st.error("No watermark found in this text.")
+                        st.info("This report was either not generated by ArgentAgent, or has been stripped of its watermark.")
+                    else:
+                        st.success(f"✓ Watermark found: `{extracted_bits}`")
+                        
+                        # Brute-force match against known users
+                        found = False
+                        for user in known_users:
+                            if _username_to_code(user) == extracted_bits:
+                                st.success(f" **User identified: `{user}`**")
+                                found = True
+                                break
+                        
+                        if not found:
+                            st.warning("⚠️ Watermark extracted but no matching user found in database.")
 
 # ---------------- ROUTER ----------------
 if st.session_state.logged_in:
